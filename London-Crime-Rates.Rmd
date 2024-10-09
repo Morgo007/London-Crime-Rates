@@ -1,0 +1,309 @@
+
+# Introduction
+
+This project analyses the crime rate in London boroughs, by creating a minimal adequate model with the highly correlated explanatory variables. This project takes into consideration the spatial patterns that may occur, through the use of graphics and formal tests. Firstly, the distribution of the crime data is examined, and logged to superimpose a normal distribution. To distinguish the variables that affect crime rate, a correlation matrix is created and explored. After distinguishing the variables that affect the crime rate, an initial regression model is fitted. From this first model, an avPlots and VIF is ran to check for multicollinearity between the independent variables. From this, an informed decision is taken to remove variables that show multicollinearity to produce a second model. The same procedures are undertaken for the second model, as well as it being tested for heteroskedastity, multicollinearity and the presence of residuals and leverage points. The residuals are removed from the second model to produce a final minimal adequate linear regression model, to account for the observed crime rate in the London boroughs.   
+
+```{r = FALSE, message = FALSE}
+#Reading in the relevant libraries
+library(mosaic) #Useful for data analysis
+library(tidyverse) #Useful for data importation and data visualisation
+library(sf) #Needed to read in shapefiles
+library(tmap) #Needed for mapping
+library(tmaptools) #Needed for mapping
+library(spdep) #Needed for spatial autocorrelation calculations
+library(GISTools) #Needed for mapping
+library(car) #Useful for regression model analysis
+library(HH) #Useful for statistical analysis and data display
+library(spatialreg) #Useful for spatial regression calculations
+library(RColorBrewer) #Needed to change the colour palette when mapping
+```
+
+```{r}
+#Reading in all of the relevant datasets
+CRIME = read_csv("LONDON_CRIME_RATE_2019.csv") #Crime data
+DEP = read_csv("LONDON_DEPRIVATION_2019.csv") #Deprivation data
+LSOA_DATA = read_csv("LSOA_DATA.csv") #LSOA data
+LSOA = st_read("LSOA/LSOA.shp") #LSOA shapefile
+```
+
+#Descriptive statistics, correlation analysis and partial regression plots.
+
+First, it is important to check the crime rate distribution, given in the **CRIME** data, by plotting a histogram and a distribution curve. To do this, the **RATE_per_1000** variable is examined.
+
+**RATE_per_1000** - the average crime figure converted to a rate per 1000 persons.
+
+```{r}
+gf_dhistogram(~RATE_per_1000, title = "Crime rate per 1000 in London boroughs", xlab = "Crime rate per 1000", ylab = "Density", col = c("black"), fill = c("orange"), data = CRIME) %>% gf_fitdistr(dist = "dnorm")
+```
+
+The plotting of the crime rate, shows that the crime rate for London is positively skewed. This suggests that the crime rate data could benefit from being transformed to make the data more comprehendable.
+
+
+To transform the data, the crime data has been logged. The distribution of the logged crime data is checked through a histogram and distribution curve
+```{r}
+gf_dhistogram(~log(RATE_per_1000), title = "Logged crime rate per 1000 in London boroughs", xlab = "Log rate per 1000", ylab = "Density", col = c("black"), fill = c("orange"), data = CRIME) %>% gf_fitdistr(dist = "dnorm")
+```
+
+From this, it is clear that logging the crime rate data superimposes a normal distribution. This is beneficial as normal distributions are common in nature, and therefore suitable inferences can be made from the regression models. 
+
+With this information in mind, I have decided to log the original crime rate data, to create a new dependent variable called **LOG_RATE**. Logging is useful in this instance, as we are not concerned with crime rate on an absolute basis, instead we are interested with the crime rate pattern. This is important, as logging allows us to understand the crime rate on a relative basis. Instead of using the original crime rate data in the regression model, the log crime rate data will be used and referred to throughout.
+
+```{r}
+#Creating new crime rate name to CRIME$LOG_RATE
+CRIME$LOG_RATE = log(CRIME$RATE_per_1000)
+```
+
+
+```{r}
+#Creating a new dataset called _CRIME_ by merging the: _CRIME_, _DEP_ and _LSOA_ data together. This is possible as all of the datasets have the _LSOA_ variable in common.
+CRIME= merge(CRIME,DEP)
+CRIME = merge(CRIME,LSOA_DATA)
+```
+
+To begin fitting an initial model, it is suitable to inspect the correlation between all the possible independent variables that may affect the crime rate.
+```{r}
+mcor <- round(cor(CRIME[,3:79]), digits=2) #Producing a correlation matrix for the CRIME dataset
+head(mcor, n=4) #Displaying the headings of the correlation matrix
+```
+Where there is a correlation value of >0.6 or <-0.6 between the independent variable and **LOG_RATE**, this means that there is a moderate correlation between them, and must be considered for the initial model.
+
+Although **AVERAGE_CRIME**,  **RATE_per_1000** and **CRIME_RANK** have a correlation greater than 0.6, these are not used for the initial model, as it is not logical to explain the crime rate with crime. 
+
+As the **IMD_SCORE** has a correlation value of +0.64 with the **LOG_RATE**, this has been added into the initial model. The **IMD_SCORE** shows multiple deprivation so it is representative of deprivation overall. The other deprivation variables in the _DEP_ dataset have not been accounted for in the initial model as they are a subset to the **IMD_SCORE**, and therefore they will display multicollinearity.
+
+From this, a decision was made to select one independent variable from each remaining category, that has the greatest correlation coefficient.
+
+**As a result, the variables considered in the initial model include (_the category is shown in brakets in italics_):**
+
+**IMD_RANK*** - Index of Multiple Deprivation (IMD) Score
+
+**Age_65_Plus** (_Age_) - Percentage aged 65+, Estimate 2013
+
+**No_Dependent_Children** (_Households with people_) - Percentage Households with no dependent children 2011
+
+**Black** (_Ethnicity_) - Black/African/Caribbean/Black British (%) 2011
+
+**Muslim** (_Religion_) - Percentage Muslim Religion 2011
+
+**Owned_outright** (_Housing_) - Percentage House Tenure: Owned Outright 2011
+
+
+From this, we can begin fitting the initial regression model
+
+
+```{r}
+#Fitting an initial regression model
+Initial_model = lm(LOG_RATE ~ IMD_SCORE + Age_65_Plus + No_Dependent_Children + Black + Muslim + Owned_outright + Flat_2011, data = CRIME)
+```
+
+
+Now that the initial regression model has been fitted, it is useful to analyse the summary of the model to understand the significance of the independent variables on the dependent LOG_RATE variable
+```{r}
+#Producing a summary
+library(stargazer) #Needed for the stargazer summary
+stargazer(Initial_model, type='text')
+```
+
+_R-Squared_
+
+The Adjusted R-squared value shows that the initial regression model accounts for 44.5% of the crime rate data. This means that the model does not account for 45.5% of the crime rate data.
+
+
+_F-statistic_
+The p-value for the F-statistic shows that the likelihood of this F-statistic occuring, if there was no difference, is very unlikely. This means that the null hypothesis of no difference from the selected variables, can be rejected to a 99.99% confidence level. This means that the initial model predicts crime rate well overall.
+
+From this output it is viable to drop certain variables which are not significant. The output shows that the **Owned_outright** and **Age_65_Plus** does not have as much of a significant effect on the LOG_RATE, when looking at the p values.
+
+_Confidence intervals_
+The confidence intervals are shown in the brackets for each independent variable. The **Owned_outright** and **Age_65_Plus** variables have standard errors that are nearly as big as themselves. This means that there is a lot of uncertainty around these variables, which will affect the reliability of the model.  
+
+Instead of looking at the standard errors numerically, these can be plotted as coefficient plots to get a visual understanding of these errors.
+
+
+```{r}
+#Plotting the standard errors for the independent variables
+library(broom) #Needed for the tidy() function
+ests = tidy(Initial_model, conf.int = T)
+library(dplyr) #Needed for the slice() function
+ests %>% slice(2:8)  %>% 
+ggplot() + 
+  geom_errorbarh(aes(y=term, xmin=conf.low, xmax=conf.high), height=.5) + 
+  geom_point(aes(y=term, x=estimate, color=p.value<0.01), size=5) 
+```
+
+_Analysis of the coefficient plots_
+
+These coefficient plots are useful when analysing the statistical signficance of each independent variable in the regression model
+
+From a first glance, it is apparent that all the independent variables have a significant effect on the logged crime rate apart from the **Owned_outright** and **Age_65_Plus** variables. This plot shows that the p-value for the **Owned_outright** and the **Age_65_Plus** is greater than 0.01, and therefore is less significant than the remaining independent variables.
+
+These two independent variables, have very large confidence intervals that overlap with other variables. From this, it’s reasonable to think that these independent variables are similar to the other variables, as their values can not be differentiated. 
+
+Before removing these, it is important to test for multicollinearity. Where multicollinearity is detected, the variables may have to be removed.
+```{r}
+#Calculating multicollinearity
+vif(Initial_model) 
+```
+
+A VIF of 1.0 is ideal as it shows no multicollinearity, and a VIF > 5 is not ideal as it indicates multicollinearity. With this information in mind, the **No_Dependent_Children** and **Owned_outright** variables display multicollinearity. The **IMD_SCORE** and **Age_65_Plus** are also of concern. From this, it is logical to drop the **Owned_outright** and **No_Dependent_Children** variables as they show multicollinearity. . 
+
+
+To further the exploration of multicollinearity, we can carry out partial plots. This explores the relationship between the **LOG_RATE** and an individual independent variable with the effects of the other variables removed.
+```{r}
+avPlots(Initial_model, layout=c(5,2)) 
+```
+
+From the output of the avPlots, it is evident that the regression line for the **Owned_outright**, and **No_Dependent_Children** is near zero. This shows that there is almost no linear relationship contextually between houses owned ouright and people aged 65 and above against crime rate in London boroughs.
+
+_Summary of the statistical analysis_
+
+The VIF shows multicollinearity in the **Owned_outright** and the **No_Dependent_Children** variables, and therefore they are removed for the second model. Although the **IMD_SCORE** variable is a slight concern, it is showing a significant effect on the crime rate in the standard error plot, and therefore it has been kept for the second linear regression model. The **Age_65_Plus** variable has also been kept for the second model, as it does not display multicollinearity. These variables could get removed later if they are still of concern.
+
+
+```{r}
+#Producing a second linear regression model
+model2 = lm(LOG_RATE ~ IMD_SCORE + Age_65_Plus + Black + Muslim + Flat_2011, data = CRIME)
+stargazer(Initial_model, model2, type='text')
+```
+From the p values given in the summary for each independent variable, it is clear that all the independent variables significantly affect the crime rate, to a 99.99% confidence level in model2. Even **Age_65_Plus** is showing significance in model2, and therefore there is no sign that it needs to be removed. 
+
+**Adjusted R-squared** - this value shows that 44.1% of the crime rate data is accounted for from the second model. Although this is a 0.04% reduction from the Initial_model, model2 is more suitable as there is less effect of multicollinearity, and therefore model2 is more reliable to make inferences from. 
+
+We can test the significance of model2 against the Initial_model, formally by using an analysis of variance on the two models.
+```{r}
+#Calculating an anova test
+anova(Initial_model,model2)
+```
+
+The p value for model2 is <0.05 and therefore model2 is significantly better than the Initial_model at accounting for the crime rate in London, as the likelihood of the F value occuring by chance is very unlikely. Although less of the crime rate data is accounted for, model2 is a better model.
+
+```{r}
+#Checking for multicollinearity in model2
+vif(model2)
+```
+The VIF shows no multicollinearity for all of the independent variables. This means that none of the variables need to be transformed or removed.
+
+This means that model2 does not to be adjusted in terms of variables. Due to this, it is important to look into the residuals that are present in the model.
+
+```{r}
+#Diagnostic plots for the residuals in model2
+par(mfrow=c(2,2))
+plot(model2)
+```
+
+**Residual vs Fitted Model**
+This enables us to look at the residuals from our model, as well as highlighting the significant ones. From this, the significant residuals are: **4616**, **4783**, **4614**. 
+
+**Normal Q-Q plot**
+This plot shows us that some of our residuals deviate from what would be the case if they were normally distributed. There is a positive skew in the residuals.
+
+All the standardized residuals are greater than 2 which is of concern, as it shows that the observed frequency is greater than the expected frequency. 
+
+**Residuals vs Leverage plot**
+In our plot, points **4614**, **2** and **1** are large outliers. These will affect the position of the regression line and increase the total variation of observations around the line and reduce the overall R-squared value value. However, there is no Cook's distance line, and therefore these residuals are not leverage points. This is very important as it shows that the residuals are not distorting the accuracy and outcome of the overall regression model.
+
+
+```{r}
+#Testing the model2 residuals for heteroskedasticity: the Breusch-Pagan test
+library(lmtest) #Needed for the heteroskedasticity calculation 
+bptest(model2)
+```
+
+Unfortunately,  it is very unlikely that we would be obtaining the BP value by chance as the p value is quite small. As this is a test of no difference we have to accept that there is heteroskedasticity. 
+
+To reject the null of no difference, at a 95% confidence level, and therefore state that heteroskedasticity wasn’t significant, the p-value would need to be larger than 0.05.
+
+To combat this, it is possible to remove certain values where the residuals are large. To do this, we need to access the residuals directly.
+
+```{r}
+#Accessing the residuals in model2 directly 
+Res =residuals(model2)
+```
+
+In order to make valid inferences from the regression model, the residuals of the regression should follow a normal distribution. Therefore, it is important to check the distribution of the residuals for model2.
+```{r}
+gf_dhistogram(~Res, fill=c("orange"), title = "Distribution of the residuals in model2", xlab = "Residuals", ylab = "Density" ) %>%  gf_density(alpha = 0.6)
+```
+
+The plotted histogram and density curve shows that the residuals are distributed normally. This is important, as this shows that the residuals affect model2 equally. As a result of this, we are able to make valid inferences from the linear regression model2. From this, we can plot a regression model which excludes these residuals. As a result of this, it is expected that the R-squared value for the model should increase.
+
+
+From the **Residual vs Fitted** plot, it was apparent that the significant residuals were all greater than 2.7. Therefore in order to produce a model with no significant residuals, we remove all the residuals above 2.7.
+```{r}
+#Producing a regression model that removes the residuals from model2
+No_residuals_model2 = lm(model2, data=CRIME, subset = abs(Res)< 2.7)
+```
+
+It is relevant to compare this new model with model2 to see how the linear regression is effected when the residuals are removed
+```{r}
+stargazer(model2, No_residuals_model2, type='text')
+```
+
+From this summary, it is apparent that the signficance and the confidence intervals of the independent variables remain constant, however the R-squared and the F Statistic change.
+
+*R-Squared* - No_residuals_model2 has a greater R-squared and Adjusted R-squared, compared to model3, by +0.006. This shows that by removing the residuals in model2, the linear regression model is able to account for a greater percentage of the observed crime rate in London. 
+
+*F Statistic* - Both F-statistics have a p-value which is lower than 0.1, and therefore we can reject the null hypothesis of 'their is no significant effect of these variables on crime rate' with both models.
+
+As the **No_residuals_model2** model accounts for more of the crime rate data, and includes less distorting values, I have decided that this will be the final model as it is the most reliable.
+
+
+## Mapping the data and spatial correlation
+
+The final section of this report looks at the data on a spatial scale, whilst considering any spatial issues
+
+Firstly, it is important to merge the **LSOA** shapefile and the **CRIME** dataset together
+```{r}
+LSOA=merge(LSOA,CRIME)
+```
+
+
+```{r}
+#Mapping the crime rate against the London spatial scale
+tmap_mode("plot")
+tm_shape(LSOA) + tm_fill("LOG_RATE", title="LOG_RATE",palette = "Oranges", style="jenks",n=5) + tm_borders() + tm_legend(legend.position = c(0.001,0.01),legend.height =0.5) + tm_layout(title= "Logged crime rate per 1000", title.size = 1.75,title.position=c(0.01,0.93)) + tm_compass(north = 0,type = "arrow",position = c("right","top")) + tm_scale_bar(position=c("right", "bottom"))
+```
+
+This shows the generic trends of crime rate in London. We can use this as a basis for measuring autocorrelation.
+
+
+```{r}
+#Generating a list of 6 near neighhbours for each point, and converting this into a neighbourhood list which is necessary for a moran test.
+cent = st_centroid(LSOA)
+nearest_neigh = knearneigh(cent,k=6)
+nearest_neigh = knn2nb(nearest_neigh)
+```
+
+Having obtained the nearest neighbours we can create a spatial weights matrix, which enables us to produce a moran plot and calculate a moran test.
+```{r}
+#Giving equal weight to each neighbour
+spweights = nb2listw(nearest_neigh) 
+```
+
+Now that we have the spatial weights matrix, we can plot the logged crime rate for a specific LSOA against the average logged crime rate for its six nearest neighbours in a Moran plot.
+```{r}
+#Creating a moran plot
+moran.plot(cent$LOG_RATE, spweights, xlab = "Central logged crime rate", ylab = "spatially lagged logged crime rate") 
+```
+
+The line of best fit through the Moran plot is our guide to whether there is positive or negative spatial autocorrelation amongst the Y values. The slope is prominent which suggests spatial autocorrelation in the crime rate. We can formally test for spatial autocorrelation in our Y variable of **LOG_CRIME** by using the moran.test
+
+```{r}
+#Calculating a moran test
+moran.test(LSOA$LOG_RATE, spweights) 
+```
+The **Moran I** statistic is a small positive value. This statistic is the value of the coefficient of the line of best fit for the moran plot. This value shows that their is evidence of positive autocorrelation in the Y variable of **LOG_RATE**. We can check if this permeates through to the residuals of the model.
+
+```{r}
+#Checking the autocorrelation of the residuals
+lm.morantest(model2, spweights)
+```
+This test shows that there is autocorrelation within the residuals. Autocorrelation is not good to have in the residuals as we cannot claim that the residuals are independent of eachother. That means some of the statistical assumptions about how much data we have are violated. This is confirms that the removal of the residuals from **model2** to create **No_residuals_model2** was necessary, to reduce this autocorrelation in the regression model.
+
+
+
+#Conclusion
+
+In conclusion, the **No_Residual_model** is the best minimal adequate regression model to account for the observed crime rate in London boroughs. It is concluded that this model uses the dependent variables of: **IMD_SCORE**, **Age_65_Plus**, **Black**, **Muslim** and **Flat_2011** to account for 44.7% of the crime rate in London. This final model includes no significant residuals or leverage points that will ultimately alter the outcomes of the model. There is no sign of multicollinearity present within this final model. This outcome means that my final model is fairly reliable to make inferences from. On the other hand, the Breusch-Pagan test does highlight heteroskedasity, and as a result may be creating unequal variance, which potentially could create invalid analysis.
+
+
